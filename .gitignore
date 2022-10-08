@@ -1,7 +1,7 @@
 # 忽略node_modules目录
-build/
+./build/
 .catkin_workspace 
-devel/
+./devel/
 .vscode
 # 忽略Logs
 logs

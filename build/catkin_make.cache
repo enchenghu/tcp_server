@@ -1,2 +1,0 @@
-tt
--DCATKIN_DEVEL_PREFIX=/home/encheng/catkin_ws/tcp_server/devel -DCMAKE_INSTALL_PREFIX=/home/encheng/catkin_ws/tcp_server/install -G Unix Makefiles
