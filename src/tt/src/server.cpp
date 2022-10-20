@@ -20,6 +20,7 @@ using namespace std;
 #define LOG(n) std::cout << n << "|" << __FILE__ << ":" << __LINE__ << "->|"
 #define LOG_END << std::endl;
 #define TCP_PC_SIZE 32000
+#define UDP_IP "127.0.0.1"
 typedef enum
 {
     POWER_WRITE = 1, 
@@ -32,7 +33,9 @@ typedef enum
     DFT3_READ,
     DIFF_READ,
 	REG_READ,
-    PC_READ	
+	PC_READ,
+	FFT_ADC_READ_START,
+	FFT_ADC_READ_STOP
 }commandType;
 uint8_t *encode_cali_data = nullptr;
 typedef struct API_Header
@@ -141,12 +144,60 @@ int loopsend(int socket, int size, uint8_t* data){
 
     return 0;
 }
+
+int udpRecvSocketFd_  = 0;
+ void *udp_msg_sender(void *)
+ {
+     int ret;
+    struct sockaddr_in ser_addr; 
+
+    udpRecvSocketFd_ = socket(AF_INET, SOCK_DGRAM, 0); //AF_INET:IPV4;SOCK_DGRAM:UDP
+    if(udpRecvSocketFd_ < 0)
+    {
+        printf("create udpRecvSocketFd fail!");
+    }
+
+    memset(&ser_addr, 0, sizeof(ser_addr));
+    ser_addr.sin_family = AF_INET;
+	ser_addr.sin_addr.s_addr = inet_addr(UDP_IP);
+    //ser_addr.sin_addr.s_addr = htonl(INADDR_ANY); //IP地址，需要进行网络序转换，INADDR_ANY：本地地址
+    ser_addr.sin_port = htons(8888);  //端口号，需要网络序转换
+
+#if 0
+
+    ret = bind(udpRecvSocketFd_, (struct sockaddr*)&ser_addr, sizeof(ser_addr));
+    if(ret < 0)
+    {
+        printf("socket bind fail!\n");
+    }
+#endif
+
+    socklen_t len;
+    struct sockaddr_in src;
+    char buf[1024] = "client send: TEST UDP MSG!\n";
+    char buff[1024] = "client send: TEST UDP MSG!\n";
+	printf("ready recv udp msg!\n");
+    len = sizeof(sockaddr);
+    while(1)
+    {
+        //memset(buf, 0, 1024);
+        //recvfrom(udpRecvSocketFd_, buf, 1024, 0, (struct sockaddr*)&src, &len);  //接收来自server的信息
+        printf("client send is :%s\n",buff);
+#if 1
+        int nnn = sendto(udpRecvSocketFd_, buff, 1024, 0, (struct sockaddr*)&ser_addr, len);
+#endif
+        usleep(500 * 1000);  //一秒发送一次消息
+    }
+ }
+
 int main(int argc, char** argv) 
 { 
     ros::init(argc, argv, "talker");
     ros::NodeHandle roshandle;
+    pthread_t udp_send;
     const char *cali_file_path = "/home/encheng/data/cp_data.dat";
     int  filesize = LoadDat(cali_file_path);
+
 
     int listenfd, connfd; 
     commandMsg msg;
@@ -200,7 +251,7 @@ int main(int argc, char** argv)
     while(1)
     {
         memset(&msg, 0,  sizeof(msg)); 
-        n = read(connfd, &msg, sizeof(msg)); 
+        n = recv(connfd, &msg, sizeof(msg), MSG_WAITALL); 
         printf("buffer len is %d\n", n); 
         if(n == 0){
             close(connfd); 
@@ -222,6 +273,12 @@ int main(int argc, char** argv)
                 if(loopsend(connfd, filesize, encode_cali_data))
                     return -1;
             }
+            break;
+        case FFT_ADC_READ_START:
+        	pthread_create(&udp_send, NULL, udp_msg_sender, NULL);
+            break;
+        case FFT_ADC_READ_STOP:
+            close(udpRecvSocketFd_);
             break;
         default:
             break;
