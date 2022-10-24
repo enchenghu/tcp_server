@@ -1,8 +1,0 @@
-prefix=/home/encheng/catkin_ws/tcp_server/install
-
-Name: tt
-Description: Description of tt
-Version: 0.0.0
-Cflags: 
-Libs: -L${prefix}/lib 
-Requires: 
