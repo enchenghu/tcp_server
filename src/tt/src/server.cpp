@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <arpa/inet.h>
 #include <iostream>
+#include <cmath>
 using namespace std;
 #define MAXLINE 4096 
 #define INFO "info"
@@ -190,6 +191,13 @@ int udpRecvSocketFd_  = 0;
     }
  }
 
+double fft2dBm(double x){
+	double inputV = (x / pow(2, 4.5) + 22) / 7.048;
+	//double res = 10 * log10(20 * pow((inputV / 4000 / sqrt(2)), 2));
+	double res = 10 * log10(20 * (inputV / 4000 / sqrt(2)) * (inputV / 4000 / sqrt(2)));
+	return res; 
+}
+
 int main(int argc, char** argv) 
 { 
     ros::init(argc, argv, "talker");
@@ -197,8 +205,12 @@ int main(int argc, char** argv)
     pthread_t udp_send;
     const char *cali_file_path = "/home/encheng/data/cp_data.dat";
     int  filesize = LoadDat(cali_file_path);
-
-
+    std::chrono::duration<double> elapsed;
+    auto start = std::chrono::steady_clock::now();
+    std::cout << "res is " << fft2dBm(32172.577) << std::endl;
+    auto end = std::chrono::steady_clock::now();
+    elapsed = end - start;
+    std::cout << "time for fft2dBm: " <<  elapsed.count() * 1000 << " ms" << std::endl;    
     int listenfd, connfd; 
     commandMsg msg;
     struct sockaddr_in servaddr; 
