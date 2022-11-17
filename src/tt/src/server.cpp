@@ -50,6 +50,16 @@ typedef struct API_Header
 
 typedef struct 
 {
+	uint16_t 	usPrefix; // 0xeeff
+	uint16_t 	usType; // 0x10 version 1.0
+	uint16_t 	usRollingCounter; 
+	uint16_t 	usPayloadCrc;
+	uint32_t 	usFrameCounter;
+	uint32_t 	unLength;
+}UDP_Header;
+
+typedef struct 
+{
 	API_Header 	mHead; // 0xeeff
 	uint32_t 	mCommandVal[2];
 	//float 	mCommandVal_f;
@@ -175,17 +185,28 @@ int udpRecvSocketFd_  = 0;
 
     socklen_t len;
     struct sockaddr_in src;
-    char buf[1024] = "client send: TEST UDP MSG!\n";
-    char buff[1024] = "client send: TEST UDP MSG!\n";
+    uint8_t buf[1024] = "client send: TEST UDP MSG!\n";
+    uint8_t buff[] = "00010203040506070809\n";
+    string mbuf = "00010203040506070809";
+
 	printf("ready recv udp msg!\n");
     len = sizeof(sockaddr);
+    string header;
+    header.resize(sizeof(UDP_Header), '0');
+    std::cout << "header is " << header << std::endl;
+    string msg = header + mbuf;
+    std::cout << "msg size is " << msg.size() << std::endl;
+    std::cout << "msg sizeof is " << sizeof(msg) << std::endl;
+    std::cout << "header size is " << header.size() << std::endl;
+    std::cout << "mbuf size is " << mbuf.size() << std::endl;
     while(1)
     {
         //memset(buf, 0, 1024);
         //recvfrom(udpRecvSocketFd_, buf, 1024, 0, (struct sockaddr*)&src, &len);  //接收来自server的信息
-        printf("client send is :%s\n",buff);
+        //printf("client send is :%s\n",msg.c_str());
+        std::cout << "msg is " << msg << std::endl;
 #if 1
-        int nnn = sendto(udpRecvSocketFd_, buff, 1024, 0, (struct sockaddr*)&ser_addr, len);
+        int nnn = sendto(udpRecvSocketFd_, msg.c_str(), msg.size(), 0, (struct sockaddr*)&ser_addr, len);
 #endif
         usleep(500 * 1000);  //一秒发送一次消息
     }
@@ -259,6 +280,7 @@ int main(int argc, char** argv)
 
 	int nSendBuf= 320 * 1024;//设置为32K
 	setsockopt(connfd, SOL_SOCKET,SO_SNDBUF,(const char*)&nSendBuf,sizeof(int));
+    bool ifstop = false;
 
     while(1)
     {
@@ -288,14 +310,16 @@ int main(int argc, char** argv)
             break;
         case FFT_ADC_READ_START:
         	pthread_create(&udp_send, NULL, udp_msg_sender, NULL);
-            break;
+            break;       
         case FFT_ADC_READ_STOP:
             close(udpRecvSocketFd_);
+            ifstop = true;
             break;
         default:
             break;
         }
 
+        if(ifstop) break;
         //buff[n] = '\0'; 
         printf("msg.mCommandVal from client: %d\n", msg.mCommandVal[1]); 
     } 
