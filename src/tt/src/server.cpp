@@ -71,7 +71,14 @@ typedef struct
 	uint8_t 	pcTcpData[TCP_PC_SIZE];
 } pcData_t;
 
+typedef struct 
+{
+	UDP_Header 	mHead; 
+	uint8_t 	pcUdpData[1024];
+} udpMsg;
+
 pcData_t g_msg;
+bool ifstop = false;
 bool check_file_exist(const std::string &path) {
 #ifdef _MSC_VER  
 	bool ret = 0 == _access(path.c_str(), 0);
@@ -172,7 +179,7 @@ int udpRecvSocketFd_  = 0;
     ser_addr.sin_family = AF_INET;
 	ser_addr.sin_addr.s_addr = inet_addr(UDP_IP);
     //ser_addr.sin_addr.s_addr = htonl(INADDR_ANY); //IP地址，需要进行网络序转换，INADDR_ANY：本地地址
-    ser_addr.sin_port = htons(8888);  //端口号，需要网络序转换
+    ser_addr.sin_port = htons(8889);  //端口号，需要网络序转换
 
 #if 0
 
@@ -199,16 +206,24 @@ int udpRecvSocketFd_  = 0;
     std::cout << "msg sizeof is " << sizeof(msg) << std::endl;
     std::cout << "header size is " << header.size() << std::endl;
     std::cout << "mbuf size is " << mbuf.size() << std::endl;
-    while(1)
+    udpMsg sendMsg;
+    memset(&sendMsg, 0, sizeof(udpMsg));
+    int index = 0;
+    while(!ifstop)
     {
         //memset(buf, 0, 1024);
         //recvfrom(udpRecvSocketFd_, buf, 1024, 0, (struct sockaddr*)&src, &len);  //接收来自server的信息
         //printf("client send is :%s\n",msg.c_str());
-        std::cout << "msg is " << msg << std::endl;
+        //std::cout << "msg is " << msg << std::endl;
+        sendMsg.mHead.usFrameCounter = index++;
+        memset(&sendMsg, 0, sizeof(udpMsg));
+        for(int i = 0; i < 256; i++){
+            sendMsg.mHead.usRollingCounter = i;
+            int nnn = sendto(udpRecvSocketFd_, &sendMsg, sizeof(udpMsg), 0, (struct sockaddr*)&ser_addr, len);
+            usleep(500);  //一秒发送一次消息
+        }
 #if 1
-        int nnn = sendto(udpRecvSocketFd_, msg.c_str(), msg.size(), 0, (struct sockaddr*)&ser_addr, len);
 #endif
-        usleep(500 * 1000);  //一秒发送一次消息
     }
  }
 
@@ -218,7 +233,7 @@ double fft2dBm(double x){
 	double res = 10 * log10(20 * (inputV / 4000 / sqrt(2)) * (inputV / 4000 / sqrt(2)));
 	return res; 
 }
-
+using namespace std;
 int main(int argc, char** argv) 
 { 
     ros::init(argc, argv, "talker");
@@ -232,6 +247,10 @@ int main(int argc, char** argv)
     auto end = std::chrono::steady_clock::now();
     elapsed = end - start;
     std::cout << "time for fft2dBm: " <<  elapsed.count() * 1000 << " ms" << std::endl;    
+    string test_str = "123456\t\n";
+    cout << "test_str size is " << test_str.size() << endl;
+    cout << test_str;
+    cout << "test_str" << endl;
     int listenfd, connfd; 
     commandMsg msg;
     struct sockaddr_in servaddr; 
@@ -280,7 +299,6 @@ int main(int argc, char** argv)
 
 	int nSendBuf= 320 * 1024;//设置为32K
 	setsockopt(connfd, SOL_SOCKET,SO_SNDBUF,(const char*)&nSendBuf,sizeof(int));
-    bool ifstop = false;
 
     while(1)
     {
