@@ -36,7 +36,9 @@ typedef enum
 	REG_READ,
 	PC_READ,
 	FFT_ADC_READ_START,
-	FFT_ADC_READ_STOP
+	FFT_ADC_READ_STOP,
+	POINTCLOUD_START,
+	POINTCLOUD_STOP
 }commandType;
 uint8_t *encode_cali_data = nullptr;
 typedef struct API_Header
@@ -77,8 +79,53 @@ typedef struct
 	uint8_t 	pcUdpData[1024];
 } udpMsg;
 
+typedef struct {	// 某个点的维度信息的系数
+	uint16_t dfPower1;		// 功率1
+	uint16_t dfPower2;		// 功率2
+	uint16_t dfRange;			// 距离
+	uint16_t dfDoppler;		// 速度
+	uint16_t dfAzimuth;		// 方位角
+	uint16_t dfElevation;		// 俯仰角
+}DataFactor_st;	// 12Bytes
+
+typedef struct {
+	uint16_t pcPrefix; 		// 0xeeff
+	uint16_t pcVersion;		// Version：0x0102 = V1.2
+	uint32_t pcTimeLsb;		// 时间戳低位（ns为单位，还是UTC时间戳）
+	uint32_t pcTimeMsb;		// 时间戳高位
+	uint32_t pcPayloadLength;	// 点云数据长度  // 目前固定：1200
+	uint16_t pcFrameCounter; 	// 点云图的帧计数
+	uint16_t pcMessageNumber;	// rolling counter
+	uint16_t pcState;			// 报文标志（比如：是否是最后一帧）
+	uint16_t reserve;			// 保留字节
+	DataFactor_st DataFactor; 	// 点云数据单位系数
+	uint16_t pcHeaderCrc;		// UDP头Crc校验值（整个Header）
+	uint16_t pcPayloadCrc;		// UDP点云数据校验值（Payload）
+}PointCloud_st;	// 38Bytes
+
+
+typedef struct {	
+	uint16_t power1;		// 功率1
+	uint16_t power2;		// 功率2
+	uint16_t range;		// 距离
+	uint16_t doppler;		// 速度
+	uint16_t azimuth;		// 方位角
+	uint16_t elevation;	// 俯仰角
+			//unit16_t type;		// 保留（表示点的特殊情况，比如：当前点是光学无效点）
+}PointMeta_st;	// 12Bytes
+
+
+typedef struct 
+{
+	PointCloud_st 	pcHeader; 
+	PointMeta_st 	pcUdpData[100];
+} pcData_v01;
+
 pcData_t g_msg;
+pcData_v01 g_msg_pc;
 bool ifstop = false;
+bool ifPCstop = false;
+
 bool check_file_exist(const std::string &path) {
 #ifdef _MSC_VER  
 	bool ret = 0 == _access(path.c_str(), 0);
@@ -164,7 +211,9 @@ int loopsend(int socket, int size, uint8_t* data){
 }
 
 int udpRecvSocketFd_  = 0;
- void *udp_msg_sender(void *)
+int udpPcRecvSocketFd_  = 0;
+
+void *udp_msg_sender(void *)
  {
      int ret;
     struct sockaddr_in ser_addr; 
@@ -216,10 +265,76 @@ int udpRecvSocketFd_  = 0;
         //printf("client send is :%s\n",msg.c_str());
         //std::cout << "msg is " << msg << std::endl;
         sendMsg.mHead.usFrameCounter = index++;
-        memset(&sendMsg, 0, sizeof(udpMsg));
+        memset(&sendMsg, 0, sizeof(sendMsg));
         for(int i = 0; i < 256; i++){
-            sendMsg.mHead.usRollingCounter = i;
+            //sendMsg = i;
             int nnn = sendto(udpRecvSocketFd_, &sendMsg, sizeof(udpMsg), 0, (struct sockaddr*)&ser_addr, len);
+            usleep(500);  //一秒发送一次消息
+        }
+#if 1
+#endif
+    }
+ }
+
+
+void *udppc_msg_sender(void *)
+ {
+     int ret;
+    struct sockaddr_in ser_addr; 
+
+    udpPcRecvSocketFd_ = socket(AF_INET, SOCK_DGRAM, 0); //AF_INET:IPV4;SOCK_DGRAM:UDP
+    if(udpPcRecvSocketFd_ < 0)
+    {
+        printf("create udpRecvSocketFd fail!");
+    }
+
+    memset(&ser_addr, 0, sizeof(ser_addr));
+    ser_addr.sin_family = AF_INET;
+	ser_addr.sin_addr.s_addr = inet_addr(UDP_IP);
+    //ser_addr.sin_addr.s_addr = htonl(INADDR_ANY); //IP地址，需要进行网络序转换，INADDR_ANY：本地地址
+    ser_addr.sin_port = htons(8001);  //端口号，需要网络序转换
+
+#if 0
+
+    ret = bind(udpRecvSocketFd_, (struct sockaddr*)&ser_addr, sizeof(ser_addr));
+    if(ret < 0)
+    {
+        printf("socket bind fail!\n");
+    }
+#endif
+
+    socklen_t len;
+    struct sockaddr_in src;
+    uint8_t buf[1024] = "client send: TEST UDP MSG!\n";
+    uint8_t buff[] = "00010203040506070809\n";
+    string mbuf = "00010203040506070809";
+
+	printf("ready recv udp msg!\n");
+    len = sizeof(sockaddr);
+    string header;
+    header.resize(sizeof(UDP_Header), '0');
+    std::cout << "header is " << header << std::endl;
+    string msg = header + mbuf;
+    std::cout << "msg size is " << msg.size() << std::endl;
+    std::cout << "msg sizeof is " << sizeof(msg) << std::endl;
+    std::cout << "header size is " << header.size() << std::endl;
+    std::cout << "mbuf size is " << mbuf.size() << std::endl;
+    pcData_v01 sendMsg;
+    memset(&sendMsg, 0, sizeof(sendMsg));
+    long long index = 0;
+    while(!ifPCstop)
+    {
+        //memset(buf, 0, 1024);
+        //recvfrom(udpRecvSocketFd_, buf, 1024, 0, (struct sockaddr*)&src, &len);  //接收来自server的信息
+        //printf("client send is :%s\n",msg.c_str());
+        //std::cout << "msg is " << msg << std::endl;
+        sendMsg.pcHeader.pcFrameCounter = index++;
+        memset(&sendMsg, 0, sizeof(sendMsg));
+        for(int i = 0; i < 200; i++){
+            for(int j = 0; j < 100; j++){
+                sendMsg.pcUdpData[j].range = j + i + index % 100;
+            }
+            int nnn = sendto(udpPcRecvSocketFd_, &sendMsg, sizeof(sendMsg), 0, (struct sockaddr*)&ser_addr, len);
             usleep(500);  //一秒发送一次消息
         }
 #if 1
@@ -234,16 +349,53 @@ double fft2dBm(double x){
 	return res; 
 }
 using namespace std;
+
+void FloatToChar(float fNum, unsigned char *strBuf, int nLen) 
+{
+  if (nLen < 4)
+    return;
+  int i = 0;
+  unsigned char nTmp;
+  char *p = (char *)&fNum;
+  for (i = 0; i < 4; i++) {
+    strBuf[i] = *p;
+    p++;
+  }
+}
+
+float CharToFloat(unsigned char *strBuf, int nLen) 
+{
+  if (nLen < 4)
+    return 0;
+  int i = 0;
+  float fNum;
+  unsigned char nTmp;
+  char *p = (char *)&fNum;
+  for (i = 0; i < 4; i++) {
+    *p = strBuf[i];
+    p++;
+  }
+  return fNum;
+}
+
 int main(int argc, char** argv) 
 { 
     ros::init(argc, argv, "talker");
     ros::NodeHandle roshandle;
     pthread_t udp_send;
+    pthread_t udp_PC_send;
+
     const char *cali_file_path = "/home/encheng/data/cp_data.dat";
     int  filesize = LoadDat(cali_file_path);
     std::chrono::duration<double> elapsed;
     auto start = std::chrono::steady_clock::now();
-    std::cout << "res is " << fft2dBm(32172.577) << std::endl;
+    float data_float = -8.888;
+    float data_float_out = 6.00;
+
+    uint8_t data_u8[4];
+    FloatToChar(data_float, data_u8, 4);
+    std::cout << "data_float_out is " <<  CharToFloat(data_u8, 4) << std::endl;
+
     auto end = std::chrono::steady_clock::now();
     elapsed = end - start;
     std::cout << "time for fft2dBm: " <<  elapsed.count() * 1000 << " ms" << std::endl;    
@@ -332,6 +484,13 @@ int main(int argc, char** argv)
         case FFT_ADC_READ_STOP:
             close(udpRecvSocketFd_);
             ifstop = true;
+            break;
+        case POINTCLOUD_START:
+        	pthread_create(&udp_PC_send, NULL, udppc_msg_sender, NULL);
+            break;       
+        case POINTCLOUD_STOP:
+            close(udpPcRecvSocketFd_);
+            ifPCstop = true;
             break;
         default:
             break;
