@@ -37,8 +37,8 @@ typedef enum
 	PC_READ,
 	FFT_ADC_READ_START,
 	FFT_ADC_READ_STOP,
-	POINTCLOUD_START,
-	POINTCLOUD_STOP
+	POINTCLOUD_DISPLAY_START,
+	POINTCLOUD_DISPLAY_STOP
 }commandType;
 uint8_t *encode_cali_data = nullptr;
 typedef struct API_Header
@@ -79,50 +79,39 @@ typedef struct
 	uint8_t 	pcUdpData[1024];
 } udpMsg;
 
-typedef struct {	// 某个点的维度信息的系数
-	uint16_t dfPower1;		// 功率1
-	uint16_t dfPower2;		// 功率2
-	uint16_t dfRange;			// 距离
-	uint16_t dfDoppler;		// 速度
-	uint16_t dfAzimuth;		// 方位角
-	uint16_t dfElevation;		// 俯仰角
-}DataFactor_st;	// 12Bytes
+/* pointcloud info*/
 
 typedef struct {
-	uint16_t pcPrefix; 		// 0xeeff
-	uint16_t pcVersion;		// Version：0x0102 = V1.2
-	uint32_t pcTimeLsb;		// 时间戳低位（ns为单位，还是UTC时间戳）
-	uint32_t pcTimeMsb;		// 时间戳高位
-	uint32_t pcPayloadLength;	// 点云数据长度  // 目前固定：1200
-	uint16_t pcFrameCounter; 	// 点云图的帧计数
-	uint16_t pcMessageNumber;	// rolling counter
-	uint16_t pcState;			// 报文标志（比如：是否是最后一帧）
-	uint16_t reserve;			// 保留字节
-	DataFactor_st DataFactor; 	// 点云数据单位系数
-	uint16_t pcHeaderCrc;		// UDP头Crc校验值（整个Header）
-	uint16_t pcPayloadCrc;		// UDP点云数据校验值（Payload）
-}PointCloud_st;	// 38Bytes
+    uint16_t uphPrefix;         // 0xEEFF
+    uint16_t uphVersion;        // 0x0102: Version V1.2
+    uint32_t uphTimeLsb;        // 时间戳低位（ns为单位，还是UTC时间戳）
+    uint32_t uphTimeMsb;        // 时间戳高位
+    uint16_t uphPayloadLength;  // 点云数据长度  // 目前固定：1400（包含100个点云元数据）
+    uint16_t uphFrameCounter;   // 点云图的帧计数
+    uint16_t uphRollingCounter; // rolling counter
+    uint16_t uphState;          // 报文标志（比如：是否是最后一帧）
+    uint16_t uphHeaderCrc;      // UDP头数据Crc校验值（Header）
+    uint16_t uphPayloadCrc;     // UDP载荷数据校验值（Payload）
+}UDP_PC_head_st;    // 24Bytes
 
 
 typedef struct {	
-	uint16_t power1;		// 功率1
-	uint16_t power2;		// 功率2
-	uint16_t range;		// 距离
-	uint16_t doppler;		// 速度
-	uint16_t azimuth;		// 方位角
-	uint16_t elevation;	// 俯仰角
-			//unit16_t type;		// 保留（表示点的特殊情况，比如：当前点是光学无效点）
-}PointMeta_st;	// 12Bytes
+    uint32_t pcmIndensity;  // 功率
+    uint32_t pcmDistance;   // 距离（单位：米）   // 实际值：÷65536
+    int16_t  pcmSpeed;      // 速度（单位：米/s） // 实际值：÷128(1bit-signed, 8bit-integer, 7bit-decimal-fraction)  // 正数:远离 负数:靠近
+    uint16_t pcmVertical;   // 俯仰角（单位：°）  // 实际值：÷256  // 数据0实际上是-2.5°
+    uint16_t pcmHorizontal; // 水平角（单位：°）  // 实际值：*360/32000*2  // 0° ~ 359°
+}PC_pointMeta_st;   // 14Bytes
 
 
-typedef struct 
-{
-	PointCloud_st 	pcHeader; 
-	PointMeta_st 	pcUdpData[100];
-} pcData_v01;
+typedef struct {
+    UDP_PC_head_st  UDP_PC_head;                        // head：24字节
+    PC_pointMeta_st UDP_PC_payload[100];   // Payload：1400字节 = 14 * 100
+} UDP_PC_package_st;    // 1424字节
 
 pcData_t g_msg;
-pcData_v01 g_msg_pc;
+UDP_PC_package_st g_msg_pc;
+
 bool ifstop = false;
 bool ifPCstop = false;
 
@@ -277,6 +266,57 @@ void *udp_msg_sender(void *)
  }
 
 
+
+void pcSockerInit()
+{
+    udpPcRecvSocketFd_ = socket(AF_INET, SOCK_DGRAM, 0); //AF_INET:IPV4;SOCK_DGRAM:UDP
+    if(udpPcRecvSocketFd_ < 0)
+    {
+        printf("create udpRecvSocketFd fail!");
+    }
+}
+
+void udp_pc_msg_send_once()
+ {
+     int ret;
+    struct sockaddr_in ser_addr; 
+    memset(&ser_addr, 0, sizeof(ser_addr));
+    ser_addr.sin_family = AF_INET;
+	ser_addr.sin_addr.s_addr = inet_addr(UDP_IP);
+    //ser_addr.sin_addr.s_addr = htonl(INADDR_ANY); //IP地址，需要进行网络序转换，INADDR_ANY：本地地址
+    ser_addr.sin_port = htons(8001);  //端口号，需要网络序转换
+
+    socklen_t len;
+    struct sockaddr_in src;
+    len = sizeof(sockaddr);
+
+    UDP_PC_package_st sendMsg;
+    memset(&sendMsg, 0, sizeof(sendMsg));
+    static long long index = 0;
+    //while(!ifPCstop)
+    //{
+        //memset(buf, 0, 1024);
+        //recvfrom(udpRecvSocketFd_, buf, 1024, 0, (struct sockaddr*)&src, &len);  //接收来自server的信息
+        //printf("client send is :%s\n",msg.c_str());
+        //std::cout << "msg is " << msg << std::endl;
+        sendMsg.UDP_PC_head.uphFrameCounter = index++;
+        memset(&sendMsg, 0, sizeof(sendMsg));
+        for(int i = 0; i < 200; i++){
+            for(int j = 0; j < 100; j++){
+                sendMsg.UDP_PC_payload[j].pcmDistance = 2 * 65536;
+                sendMsg.UDP_PC_payload[j].pcmIndensity = 123456;
+                sendMsg.UDP_PC_payload[j].pcmHorizontal = 90 * 32000 / 720;
+                sendMsg.UDP_PC_payload[j].pcmVertical = 256;
+                sendMsg.UDP_PC_payload[j].pcmSpeed = (-1) * 128;
+
+            }
+            int nnn = sendto(udpPcRecvSocketFd_, &sendMsg, sizeof(sendMsg), 0, (struct sockaddr*)&ser_addr, len);
+            usleep(500);  //一秒发送一次消息
+        }
+    //}
+ }
+
+
 void *udppc_msg_sender(void *)
  {
      int ret;
@@ -305,21 +345,9 @@ void *udppc_msg_sender(void *)
 
     socklen_t len;
     struct sockaddr_in src;
-    uint8_t buf[1024] = "client send: TEST UDP MSG!\n";
-    uint8_t buff[] = "00010203040506070809\n";
-    string mbuf = "00010203040506070809";
-
-	printf("ready recv udp msg!\n");
     len = sizeof(sockaddr);
-    string header;
-    header.resize(sizeof(UDP_Header), '0');
-    std::cout << "header is " << header << std::endl;
-    string msg = header + mbuf;
-    std::cout << "msg size is " << msg.size() << std::endl;
-    std::cout << "msg sizeof is " << sizeof(msg) << std::endl;
-    std::cout << "header size is " << header.size() << std::endl;
-    std::cout << "mbuf size is " << mbuf.size() << std::endl;
-    pcData_v01 sendMsg;
+
+    UDP_PC_package_st sendMsg;
     memset(&sendMsg, 0, sizeof(sendMsg));
     long long index = 0;
     while(!ifPCstop)
@@ -328,11 +356,24 @@ void *udppc_msg_sender(void *)
         //recvfrom(udpRecvSocketFd_, buf, 1024, 0, (struct sockaddr*)&src, &len);  //接收来自server的信息
         //printf("client send is :%s\n",msg.c_str());
         //std::cout << "msg is " << msg << std::endl;
-        sendMsg.pcHeader.pcFrameCounter = index++;
+        sendMsg.UDP_PC_head.uphFrameCounter = index++;
         memset(&sendMsg, 0, sizeof(sendMsg));
         for(int i = 0; i < 200; i++){
             for(int j = 0; j < 100; j++){
-                sendMsg.pcUdpData[j].range = j + i + index % 100;
+                sendMsg.UDP_PC_payload[j].pcmDistance = (j + i + index % 100) * 65536;
+                sendMsg.UDP_PC_payload[j].pcmIndensity = 32768 + j + i;
+                if(j % 2){
+                    sendMsg.UDP_PC_payload[j].pcmHorizontal = 30 * 32000 / 720;
+                    sendMsg.UDP_PC_payload[j].pcmVertical = 0;
+                    sendMsg.UDP_PC_payload[j].pcmSpeed = (10.2) * 128;
+                }
+                else{
+                    sendMsg.UDP_PC_payload[j].pcmHorizontal = 330 * 32000 / 720;
+                    sendMsg.UDP_PC_payload[j].pcmVertical = 5 * 256;
+                    sendMsg.UDP_PC_payload[j].pcmSpeed = (-10.2) * 128;
+
+                }
+
             }
             int nnn = sendto(udpPcRecvSocketFd_, &sendMsg, sizeof(sendMsg), 0, (struct sockaddr*)&ser_addr, len);
             usleep(500);  //一秒发送一次消息
@@ -407,11 +448,14 @@ int main(int argc, char** argv)
     commandMsg msg;
     struct sockaddr_in servaddr; 
     char buff[4096]; int n; 
+    pcSockerInit();
     if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) == -1 )
     { 
         printf("create socket error: %s(errno: %d)\n",strerror(errno),errno);
         exit(0); 
     } 
+    int one = 1;
+	setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
     //fcntl(listenfd, F_SETFL, O_NONBLOCK);
 
@@ -485,10 +529,11 @@ int main(int argc, char** argv)
             close(udpRecvSocketFd_);
             ifstop = true;
             break;
-        case POINTCLOUD_START:
-        	pthread_create(&udp_PC_send, NULL, udppc_msg_sender, NULL);
+        case POINTCLOUD_DISPLAY_START:
+        	//pthread_create(&udp_PC_send, NULL, udppc_msg_sender, NULL);
+            udp_pc_msg_send_once();
             break;       
-        case POINTCLOUD_STOP:
+        case POINTCLOUD_DISPLAY_STOP:
             close(udpPcRecvSocketFd_);
             ifPCstop = true;
             break;
@@ -496,7 +541,7 @@ int main(int argc, char** argv)
             break;
         }
 
-        if(ifstop) break;
+        if(ifPCstop) break;
         //buff[n] = '\0'; 
         printf("msg.mCommandVal from client: %d\n", msg.mCommandVal[1]); 
     } 
