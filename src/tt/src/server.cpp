@@ -1,3 +1,4 @@
+
 #include<stdio.h> 
 #include<stdlib.h> 
 #include<string.h> 
@@ -13,6 +14,7 @@
 #include <arpa/inet.h>
 #include <iostream>
 #include <cmath>
+
 using namespace std;
 #define MAXLINE 4096 
 #define INFO "info"
@@ -80,6 +82,7 @@ typedef struct
 } udpMsg;
 
 /* pointcloud info*/
+#pragma pack(1)    // pack(1): pack之间的数据类型，1字节对齐
 
 typedef struct {
     uint16_t uphPrefix;         // 0xEEFF
@@ -109,6 +112,7 @@ typedef struct {
     PC_pointMeta_st UDP_PC_payload[100];   // Payload：1400字节 = 14 * 100
 } UDP_PC_package_st;    // 1424字节
 
+#pragma pack()     // pack() 结束
 pcData_t g_msg;
 UDP_PC_package_st g_msg_pc;
 
@@ -298,19 +302,32 @@ void udp_pc_msg_send_once()
         //memset(buf, 0, 1024);
         //recvfrom(udpRecvSocketFd_, buf, 1024, 0, (struct sockaddr*)&src, &len);  //接收来自server的信息
         //printf("client send is :%s\n",msg.c_str());
-        //std::cout << "msg is " << msg << std::endl;
-        sendMsg.UDP_PC_head.uphFrameCounter = index++;
-        memset(&sendMsg, 0, sizeof(sendMsg));
+        //std::cout << "msg is " << msg << std::endl
+        sendMsg.UDP_PC_head.uphPrefix  = 0xEEFF;
+        sendMsg.UDP_PC_head.uphVersion = 0x0102;
+        sendMsg.UDP_PC_head.uphTimeLsb = 0;
+        sendMsg.UDP_PC_head.uphTimeMsb = 0;
+        sendMsg.UDP_PC_head.uphPayloadLength = 1400; // 每个UDP报文，点云元数据大小（1400=14*100）
+        sendMsg.UDP_PC_head.uphFrameCounter = 0;
+        sendMsg.UDP_PC_head.uphRollingCounter = 0;
+        sendMsg.UDP_PC_head.uphState = 0;
+        sendMsg.UDP_PC_head.uphHeaderCrc = 0;
+        sendMsg.UDP_PC_head.uphPayloadCrc = 0;
+        //memset(&sendMsg, 0, sizeof(sendMsg));
         for(int i = 0; i < 200; i++){
+            //memset(&sendMsg, 0, sizeof(sendMsg));
+#if 0
             for(int j = 0; j < 100; j++){
-                sendMsg.UDP_PC_payload[j].pcmDistance = 2 * 65536;
                 sendMsg.UDP_PC_payload[j].pcmIndensity = 123456;
-                sendMsg.UDP_PC_payload[j].pcmHorizontal = 90 * 32000 / 720;
+                sendMsg.UDP_PC_payload[j].pcmDistance = 65536;
+                sendMsg.UDP_PC_payload[j].pcmSpeed = -128;
                 sendMsg.UDP_PC_payload[j].pcmVertical = 256;
-                sendMsg.UDP_PC_payload[j].pcmSpeed = (-1) * 128;
+                sendMsg.UDP_PC_payload[j].pcmHorizontal = 10000;
 
             }
-            int nnn = sendto(udpPcRecvSocketFd_, &sendMsg, sizeof(sendMsg), 0, (struct sockaddr*)&ser_addr, len);
+#endif
+            //int nnn = sendto(udpPcRecvSocketFd_, &sendMsg, sizeof(sendMsg), 0, (struct sockaddr*)&ser_addr, len);
+            int nnn = sendto(udpPcRecvSocketFd_, encode_cali_data + i * 1424, 1424, 0, (struct sockaddr*)&ser_addr, len);
             usleep(500);  //一秒发送一次消息
         }
     //}
@@ -426,7 +443,7 @@ int main(int argc, char** argv)
     pthread_t udp_send;
     pthread_t udp_PC_send;
 
-    const char *cali_file_path = "/home/encheng/data/cp_data.dat";
+    const char *cali_file_path = "/home/encheng/data/data_pc_raw_index1.bin";
     int  filesize = LoadDat(cali_file_path);
     std::chrono::duration<double> elapsed;
     auto start = std::chrono::steady_clock::now();
