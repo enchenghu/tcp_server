@@ -14,6 +14,9 @@
 #include <arpa/inet.h>
 #include <iostream>
 #include <cmath>
+#include <fstream>
+#include <sstream>
+#include <vector>
 
 using namespace std;
 #define MAXLINE 4096 
@@ -43,6 +46,7 @@ typedef enum
 	POINTCLOUD_DISPLAY_STOP
 }commandType;
 uint8_t *encode_cali_data = nullptr;
+long file_size_g = 0;
 typedef struct API_Header
 {
 	uint16_t 	usPrefix; // 0xeeff
@@ -166,6 +170,7 @@ int  LoadDat(const char *cali_file_path)
 
 	FILE *file = fopen(cali_file_path, "rb");
 	encode_cali_data = (uint8_t *)malloc(file_size);
+    file_size_g = file_size;
 	fseek(file, 0, SEEK_SET);
 	fread(encode_cali_data, file_size, 1, file);
     return file_size;
@@ -280,7 +285,120 @@ void pcSockerInit()
     }
 }
 
-void udp_pc_msg_send_once()
+static vector<PC_pointMeta_st> mv_g;
+void Save2filecsv()
+{
+	//memset(&curPcData, 0, sizeof(curPcData));
+	static long findex = 0;
+    string save_folder_ = ".";
+    uint8_t* data = encode_cali_data;
+#if 0
+	std::string datPath;
+	datPath = save_folder_ + "/data_test_raw_index" + std::to_string(findex++) +".bin";
+	ROS_INFO("datPath is %s \n", datPath.c_str());
+	std::ofstream datfile; 
+	datfile.open(datPath, std::ios::out | std::ios::binary); 
+	for(int i = 0; i < data.size(); i++) {
+		datfile << data[i];
+	}
+	datfile.close();
+#endif
+#if 0
+	time_t rawtime;
+	struct tm *ptminfo;
+	time(&rawtime);
+	ptminfo = localtime(&rawtime);
+	printf("current: %02d-%02d-%02d %02d:%02d:%02d\n",
+	ptminfo->tm_year + 1900, ptminfo->tm_mon + 1, ptminfo->tm_mday,
+	ptminfo->tm_hour, ptminfo->tm_min, ptminfo->tm_sec);
+	std::string csvPath;
+	csvPath = save_folder_ + "/data_convert_" + 
+	std::to_string(ptminfo->tm_year + 1900) + 
+	"-" + std::to_string(ptminfo->tm_mon + 1) +
+	"-" + std::to_string(ptminfo->tm_mday) +
+	"-" + std::to_string(ptminfo->tm_hour) +
+	"-" + std::to_string(ptminfo->tm_min) +
+	"-" + std::to_string(ptminfo->tm_sec) +
+	+".csv";
+	ROS_INFO("csvPath is %s \n", csvPath.c_str());
+	std::ofstream csvfile; 
+	csvfile.open(csvPath, std::ios::out); 
+	csvfile << "intensity" << "," << "distance(m)" << "," 
+	<< "speed(m/s)" << "," << "Vertical angle(degree)" << "," << "Horizontal angle(degree)" << "\n";	
+#endif
+
+    PC_pointMeta_st temp;
+    memset(&temp, 0, sizeof(PC_pointMeta_st));
+	int32_t cur_data = 0;
+	int index = 0;
+	double distance;
+	double speed;
+	double vAngle;
+	double hAngle;
+	for(int i = 0; i < file_size_g; i++) {
+		index += 1;
+		if(index < 5)
+			cur_data += data[i] << (8 * (index - 1));
+		else if (index < 9)
+			cur_data += data[i] << (8 * (index - 5));
+		else if (index < 11)
+			cur_data += data[i] << (8 * (index - 9));
+		else if (index < 13)
+			cur_data += data[i] << (8 * (index - 11));
+		else if (index < 15)
+			cur_data += data[i] << (8 * (index - 13));
+
+		if(index == 4 || index == 8){
+			if(index == 4) {
+				//csvfile << cur_data << ",";	//intensity
+                temp.pcmIndensity = cur_data;
+			}
+			else{
+				distance = cur_data / 65536.0; //distance
+                temp.pcmDistance = cur_data;
+				//csvfile << distance << ",";	
+			}
+			cur_data = 0;
+		}
+
+		if(index == 10){
+			if(cur_data > 32767)
+				cur_data -= 65536;
+
+            temp.pcmSpeed = cur_data;
+            
+			speed = cur_data / 128.0;
+			//csvfile << speed << ",";	 // speed
+			cur_data = 0;
+		}
+
+		if(index == 12){
+			vAngle = cur_data / 256.0 - 2.5; //vertical
+            temp.pcmVertical = cur_data;
+			//csvfile << vAngle << ",";	
+			cur_data = 0;
+		}
+
+		if(index == 14){
+			hAngle = cur_data * 720.0 / 32000.0; //horizontal
+            temp.pcmHorizontal = cur_data;
+			if(hAngle > 360.0) hAngle -= 360.0;
+			//csvfile << hAngle << "\n";	
+			cur_data = 0;
+		}
+
+		if(index == 16){
+			index = 0;
+            mv_g.push_back(temp);
+            memset(&temp, 0, sizeof(PC_pointMeta_st));
+		}
+	}
+	//csvfile.close();
+}
+
+
+
+void* udp_pc_msg_send_once(void* )
  {
      int ret;
     struct sockaddr_in ser_addr; 
@@ -297,8 +415,9 @@ void udp_pc_msg_send_once()
     UDP_PC_package_st sendMsg;
     memset(&sendMsg, 0, sizeof(sendMsg));
     static long long index = 0;
-    //while(!ifPCstop)
-    //{
+    Save2filecsv();
+    while(!ifPCstop)
+    {
         //memset(buf, 0, 1024);
         //recvfrom(udpRecvSocketFd_, buf, 1024, 0, (struct sockaddr*)&src, &len);  //接收来自server的信息
         //printf("client send is :%s\n",msg.c_str());
@@ -313,24 +432,25 @@ void udp_pc_msg_send_once()
         sendMsg.UDP_PC_head.uphState = 0;
         sendMsg.UDP_PC_head.uphHeaderCrc = 0;
         sendMsg.UDP_PC_head.uphPayloadCrc = 0;
+        std::cout << "mv_g size is " << mv_g.size() << std::endl;
         //memset(&sendMsg, 0, sizeof(sendMsg));
-        for(int i = 0; i < 200; i++){
+        for(int i = 600; i < 800; i++){
             //memset(&sendMsg, 0, sizeof(sendMsg));
-#if 0
+#if 1
             for(int j = 0; j < 100; j++){
-                sendMsg.UDP_PC_payload[j].pcmIndensity = 123456;
-                sendMsg.UDP_PC_payload[j].pcmDistance = 65536;
-                sendMsg.UDP_PC_payload[j].pcmSpeed = -128;
-                sendMsg.UDP_PC_payload[j].pcmVertical = 256;
-                sendMsg.UDP_PC_payload[j].pcmHorizontal = 10000;
+                sendMsg.UDP_PC_payload[j].pcmIndensity = mv_g[i * 100 + j].pcmIndensity;
+                sendMsg.UDP_PC_payload[j].pcmDistance = mv_g[i * 100 + j].pcmDistance;
+                sendMsg.UDP_PC_payload[j].pcmSpeed = mv_g[i * 100 + j].pcmSpeed;
+                sendMsg.UDP_PC_payload[j].pcmVertical = mv_g[i * 100 + j].pcmVertical;
+                sendMsg.UDP_PC_payload[j].pcmHorizontal = mv_g[i * 100 + j].pcmHorizontal;
 
             }
 #endif
-            //int nnn = sendto(udpPcRecvSocketFd_, &sendMsg, sizeof(sendMsg), 0, (struct sockaddr*)&ser_addr, len);
-            int nnn = sendto(udpPcRecvSocketFd_, encode_cali_data + i * 1424, 1424, 0, (struct sockaddr*)&ser_addr, len);
+            int nnn = sendto(udpPcRecvSocketFd_, &sendMsg, sizeof(sendMsg), 0, (struct sockaddr*)&ser_addr, len);
+            //int nnn = sendto(udpPcRecvSocketFd_, encode_cali_data + i * 1424, 1424, 0, (struct sockaddr*)&ser_addr, len);
             usleep(500);  //一秒发送一次消息
         }
-    //}
+    }
  }
 
 
@@ -438,12 +558,10 @@ float CharToFloat(unsigned char *strBuf, int nLen)
 
 int main(int argc, char** argv) 
 { 
-    ros::init(argc, argv, "talker");
-    ros::NodeHandle roshandle;
     pthread_t udp_send;
     pthread_t udp_PC_send;
 
-    const char *cali_file_path = "/home/encheng/data/data_pc_raw_index1.bin";
+    const char *cali_file_path = "/home/encheng/data/data_test_raw_index0.bin";
     int  filesize = LoadDat(cali_file_path);
     std::chrono::duration<double> elapsed;
     auto start = std::chrono::steady_clock::now();
@@ -461,10 +579,14 @@ int main(int argc, char** argv)
     cout << "test_str size is " << test_str.size() << endl;
     cout << test_str;
     cout << "test_str" << endl;
+    double angle = 389.2;
+    angle -= 360.0;
+    cout << "angle is " << angle << endl;
     int listenfd, connfd; 
     commandMsg msg;
     struct sockaddr_in servaddr; 
     char buff[4096]; int n; 
+
     pcSockerInit();
     if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) == -1 )
     { 
@@ -494,6 +616,8 @@ int main(int argc, char** argv)
         exit(0); 
     } 
     int para;
+    ros::init(argc, argv, "talker");
+    ros::NodeHandle roshandle;
     printf("======waiting for client's request======\n"); 
     while(1)
     { 
@@ -547,8 +671,8 @@ int main(int argc, char** argv)
             ifstop = true;
             break;
         case POINTCLOUD_DISPLAY_START:
-        	//pthread_create(&udp_PC_send, NULL, udppc_msg_sender, NULL);
-            udp_pc_msg_send_once();
+        	pthread_create(&udp_PC_send, NULL, udp_pc_msg_send_once, NULL);
+            //udp_pc_msg_send_once();
             break;       
         case POINTCLOUD_DISPLAY_STOP:
             close(udpPcRecvSocketFd_);
