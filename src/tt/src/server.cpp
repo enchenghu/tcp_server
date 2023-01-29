@@ -406,7 +406,7 @@ void* udp_pc_msg_send_once(void* )
     ser_addr.sin_family = AF_INET;
 	ser_addr.sin_addr.s_addr = inet_addr(UDP_IP);
     //ser_addr.sin_addr.s_addr = htonl(INADDR_ANY); //IP地址，需要进行网络序转换，INADDR_ANY：本地地址
-    ser_addr.sin_port = htons(8001);  //端口号，需要网络序转换
+    ser_addr.sin_port = htons(8002);  //端口号，需要网络序转换
 
     socklen_t len;
     struct sockaddr_in src;
@@ -618,6 +618,22 @@ int main(int argc, char** argv)
     int para;
     ros::init(argc, argv, "talker");
     ros::NodeHandle roshandle;
+    ros::V_string v_nodes;
+    ros::master::getNodes(v_nodes);
+    std::string myNode = "/record";
+    for(int i  = 0; i < v_nodes.size(); i++)
+    {
+        std::cout << "v_nodes :" << v_nodes[i] << std::endl;
+    }
+    auto it = std::find(v_nodes.begin(), v_nodes.end(), myNode.c_str());
+
+    std::cout << "myNode :" << myNode << std::endl;
+
+    if(it != v_nodes.end())
+    {
+        std::cout << "myNode :" << myNode << std::endl;
+    }
+    //std::string node_name = std::string("/my_record_node");
     printf("======waiting for client's request======\n"); 
     while(1)
     { 
