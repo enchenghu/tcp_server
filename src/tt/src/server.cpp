@@ -416,6 +416,7 @@ void* udp_pc_msg_send_once(void* )
     memset(&sendMsg, 0, sizeof(sendMsg));
     static long long index = 0;
     Save2filecsv();
+    long long index_frame = 0;
     while(!ifPCstop)
     {
         //memset(buf, 0, 1024);
@@ -427,14 +428,15 @@ void* udp_pc_msg_send_once(void* )
         sendMsg.UDP_PC_head.uphTimeLsb = 0;
         sendMsg.UDP_PC_head.uphTimeMsb = 0;
         sendMsg.UDP_PC_head.uphPayloadLength = 1400; // 每个UDP报文，点云元数据大小（1400=14*100）
-        sendMsg.UDP_PC_head.uphFrameCounter = 0;
+        sendMsg.UDP_PC_head.uphFrameCounter = index_frame++;
         sendMsg.UDP_PC_head.uphRollingCounter = 0;
         sendMsg.UDP_PC_head.uphState = 0;
         sendMsg.UDP_PC_head.uphHeaderCrc = 0;
         sendMsg.UDP_PC_head.uphPayloadCrc = 0;
         std::cout << "mv_g size is " << mv_g.size() << std::endl;
         //memset(&sendMsg, 0, sizeof(sendMsg));
-        for(int i = 600; i < 800; i++){
+        if(index > 3900) index = 0;
+        for(int i = index; i < index + 200; i++){
             //memset(&sendMsg, 0, sizeof(sendMsg));
 #if 1
             for(int j = 0; j < 100; j++){
@@ -448,8 +450,9 @@ void* udp_pc_msg_send_once(void* )
 #endif
             int nnn = sendto(udpPcRecvSocketFd_, &sendMsg, sizeof(sendMsg), 0, (struct sockaddr*)&ser_addr, len);
             //int nnn = sendto(udpPcRecvSocketFd_, encode_cali_data + i * 1424, 1424, 0, (struct sockaddr*)&ser_addr, len);
-            usleep(500);  //一秒发送一次消息
+            usleep(100);  //一秒发送一次消息
         }
+        index += 200;
     }
  }
 
