@@ -116,7 +116,6 @@ typedef struct {
     PC_pointMeta_st UDP_PC_payload[100];   // Payload：1400字节 = 14 * 100
 } UDP_PC_package_st;    // 1424字节
 
-#pragma pack()     // pack() 结束
 pcData_t g_msg;
 UDP_PC_package_st g_msg_pc;
 
@@ -210,6 +209,65 @@ int loopsend(int socket, int size, uint8_t* data){
 
 int udpRecvSocketFd_  = 0;
 int udpPcRecvSocketFd_  = 0;
+int motorSocketFd_  = 0;
+typedef struct 
+{
+	uint16_t 	mHead; 
+	uint8_t     motor_index;
+	uint8_t     cmd;
+	uint8_t     dataLen;
+} MotorMsgHeader; // 5 bytes
+
+typedef struct 
+{
+	uint8_t		count;
+	uint16_t 	crc; 
+} MotorMsgTailer; // 3 bytes
+typedef struct {
+	uint8_t     item_id;
+	float     data;
+} ItemData;
+#define ITEMS_NUM 5
+typedef struct 
+{
+	MotorMsgHeader header;
+	ItemData data[ITEMS_NUM];
+	MotorMsgTailer 	tailer; 
+} motorItemsShowMsg;
+#pragma pack()     // pack() 结束
+
+
+void *motor_msg_sender(void *)
+{
+    motorItemsShowMsg motorMsg;
+    int counter = 0;
+    motorMsg.header.mHead = 0x55aa;
+    motorMsg.header.motor_index = 0;
+    motorMsg.header.cmd = 0xc0;
+    motorMsg.header.dataLen = sizeof(ItemData) * ITEMS_NUM;
+    motorMsg.tailer.count = 0;
+    while(1){
+        //memset(motorMsg.data, 0, motorMsg.header.dataLen);
+        int sum = 0;
+        //int n = recv(motorSocketFd_, &sum, sizeof(int), MSG_WAITALL); 
+        //printf("recv motorMsg , ret is %d!\n", n);
+        for(int i = 0; i < ITEMS_NUM; i++){
+            motorMsg.data[i].item_id = i;
+            motorMsg.data[i].data = rand() % 100;
+        }
+        //motorMsg.tailer.crc =  motorMsg.header.motor_index +  motorMsg.header.cmd +  motorMsg.header.dataLen + \
+        ;
+        int ret = write(motorSocketFd_, &motorMsg, sizeof(motorMsg));
+        printf("send motorMsg , ret is %d!\n", ret);
+        if(ret < 0)
+        {
+            counter++;
+            if(counter > 8) break;
+        }
+        usleep(500*1000);
+    }
+
+}
 
 void *udp_msg_sender(void *)
  {
@@ -283,6 +341,56 @@ void pcSockerInit()
     {
         printf("create udpRecvSocketFd fail!");
     }
+}
+
+void motorSockerInit()
+{
+    motorSocketFd_ = socket(AF_INET, SOCK_STREAM, 0); //AF_INET:IPV4;SOCK_DGRAM:UDP
+    if(motorSocketFd_ < 0)
+    {
+        printf("create udpRecvSocketFd fail!");
+    }
+    struct sockaddr_in servaddr; 
+    int one = 1;
+	setsockopt(motorSocketFd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    //fcntl(listenfd, F_SETFL, O_NONBLOCK);
+    memset(&servaddr, 0, sizeof(servaddr)); 
+    servaddr.sin_family = AF_INET; 
+    servaddr.sin_addr.s_addr = htonl(INADDR_ANY);             
+    servaddr.sin_port = htons(5001); 
+    long long index_0 = 0;
+    if( bind(motorSocketFd_, (struct sockaddr*)&servaddr, sizeof(servaddr)) == -1)
+    { 
+        printf("bind socket error: %s(errno: %d)\n",strerror(errno),errno);
+        exit(0); 
+    } 
+
+    if( listen(motorSocketFd_, 10) == -1)
+    { 
+        printf("listen socket error: %s(errno: %d)\n",strerror(errno),errno);
+        exit(0); 
+    } 
+    printf("======waiting for Motor client's request======\n"); 
+    int connfd = 0;
+    while(1)
+    { 
+        if( (motorSocketFd_ = accept(motorSocketFd_, (struct sockaddr*)NULL, NULL)) == -1)
+        { 
+            printf("accept socket error: %s(errno: %d)\n",strerror(errno),errno); 
+            usleep(100);
+            continue; 
+        } else {
+            break;
+        }
+    }
+    printf("======ready receive Motor data======\n"); 
+	int nRecvBuf= 320 * 1024;//设置为32K
+	setsockopt(motorSocketFd_, SOL_SOCKET,SO_RCVBUF,(const char*)&nRecvBuf,sizeof(int));
+
+	int nSendBuf= 320 * 1024;//设置为32K
+	setsockopt(motorSocketFd_, SOL_SOCKET,SO_SNDBUF,(const char*)&nSendBuf,sizeof(int));
+
+
 }
 
 static vector<PC_pointMeta_st> mv_g;
@@ -444,7 +552,7 @@ void* udp_pc_msg_send_once(void* )
                 sendMsg.UDP_PC_payload[j].pcmDistance = mv_g[i * 100 + j].pcmDistance;
                 sendMsg.UDP_PC_payload[j].pcmSpeed = mv_g[i * 100 + j].pcmSpeed;
                 sendMsg.UDP_PC_payload[j].pcmVertical = mv_g[i * 100 + j].pcmVertical;
-                sendMsg.UDP_PC_payload[j].pcmHorizontal = mv_g[i * 100 + j].pcmHorizontal;
+                sendMsg.UDP_PC_payload[j].pcmHorizontal = 0;//mv_g[i * 100 + j].pcmHorizontal;
 
             }
 #endif
@@ -536,8 +644,7 @@ void FloatToChar(float fNum, unsigned char *strBuf, int nLen)
   if (nLen < 4)
     return;
   int i = 0;
-  unsigned char nTmp;
-  char *p = (char *)&fNum;
+  unsigned char *p = (unsigned char *)&fNum;
   for (i = 0; i < 4; i++) {
     strBuf[i] = *p;
     p++;
@@ -550,8 +657,7 @@ float CharToFloat(unsigned char *strBuf, int nLen)
     return 0;
   int i = 0;
   float fNum;
-  unsigned char nTmp;
-  char *p = (char *)&fNum;
+  unsigned char *p = (unsigned char *)&fNum;
   for (i = 0; i < 4; i++) {
     *p = strBuf[i];
     p++;
@@ -589,7 +695,7 @@ int main(int argc, char** argv)
     commandMsg msg;
     struct sockaddr_in servaddr; 
     char buff[4096]; int n; 
-
+#if 1
     pcSockerInit();
     if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) == -1 )
     { 
@@ -598,15 +704,12 @@ int main(int argc, char** argv)
     } 
     int one = 1;
 	setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-
     //fcntl(listenfd, F_SETFL, O_NONBLOCK);
-
     memset(&servaddr, 0, sizeof(servaddr)); 
     servaddr.sin_family = AF_INET; 
     servaddr.sin_addr.s_addr = htonl(INADDR_ANY);             
     servaddr.sin_port = htons(6666); 
     long long index_0 = 0;
-
     if( bind(listenfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) == -1)
     { 
         printf("bind socket error: %s(errno: %d)\n",strerror(errno),errno);
@@ -619,6 +722,26 @@ int main(int argc, char** argv)
         exit(0); 
     } 
     int para;
+    //std::string node_name = std::string("/my_record_node");
+    printf("======waiting for client's request======\n"); 
+    while(1)
+    { 
+        if( (connfd = accept(listenfd, (struct sockaddr*)NULL, NULL)) == -1)
+        { 
+            printf("accept socket error: %s(errno: %d)\n",strerror(errno),errno); 
+            usleep(100);
+            continue; 
+        } else {
+            break;
+        }
+    }
+    printf("======receive data======\n"); 
+	int nRecvBuf= 320 * 1024;//设置为32K
+	setsockopt(connfd, SOL_SOCKET,SO_RCVBUF,(const char*)&nRecvBuf,sizeof(int));
+	int nSendBuf= 320 * 1024;//设置为32K
+	setsockopt(connfd, SOL_SOCKET,SO_SNDBUF,(const char*)&nSendBuf,sizeof(int));
+#endif
+    motorSockerInit();
     ros::init(argc, argv, "talker");
     ros::NodeHandle roshandle;
     ros::V_string v_nodes;
@@ -636,26 +759,12 @@ int main(int argc, char** argv)
     {
         std::cout << "myNode :" << myNode << std::endl;
     }
-    //std::string node_name = std::string("/my_record_node");
-    printf("======waiting for client's request======\n"); 
-    while(1)
-    { 
-        if( (connfd = accept(listenfd, (struct sockaddr*)NULL, NULL)) == -1)
-        { 
-            printf("accept socket error: %s(errno: %d)\n",strerror(errno),errno); 
-            usleep(100);
-            continue; 
-        } else {
-            break;
-        }
-    }
-    printf("======receive data======\n"); 
-	int nRecvBuf= 320 * 1024;//设置为32K
-	setsockopt(connfd, SOL_SOCKET,SO_RCVBUF,(const char*)&nRecvBuf,sizeof(int));
 
-	int nSendBuf= 320 * 1024;//设置为32K
-	setsockopt(connfd, SOL_SOCKET,SO_SNDBUF,(const char*)&nSendBuf,sizeof(int));
+    pthread_t motor_send;
+    pthread_create(&motor_send, NULL, motor_msg_sender, NULL);
+    //pthread_join(motor_send, NULL);
 
+#if 1
     while(1)
     {
         memset(&msg, 0,  sizeof(msg)); 
@@ -707,5 +816,6 @@ int main(int argc, char** argv)
     } 
     close(connfd); 
     close(listenfd); 
+#endif
     return 0;
 }
